@@ -24,10 +24,10 @@ jobs:
 
       - name: Build EXE
         run: |
-          pyinstaller --onefile --windowed --name "FrontBackBuilder" --collect-all customtkinter --collect-all tkinterdnd2 FrontBackBuilder.py
+          pyinstaller --onefile --windowed --name "FrontBackBuilder" --collect-all customtkinter --collect-all tkinterdnd2 --collect-all pypdfium2 FrontBackBuilder.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FrontBackBuilder-Windows-v2
+          name: FrontBackBuilder-Windows-v2-1
           path: dist/FrontBackBuilder.exe
