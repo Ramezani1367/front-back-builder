@@ -1,5 +1,5 @@
 """
-Front-Back PDF Builder v2.1
+Front-Back PDF Builder v2.2
 Professional card printing tool
 """
 
@@ -27,7 +27,7 @@ except ImportError:
 
 # ============ Config ============
 APP_NAME = "Front-Back PDF Builder"
-APP_VERSION = "2.1"
+APP_VERSION = "2.2"
 HISTORY_FILE = os.path.join(os.path.expanduser("~"), ".fbbuilder_history.json")
 MAX_HISTORY = 10
 
@@ -90,7 +90,8 @@ def save_history(entry):
         pass
 
 
-def build_pdf(front_path, backs_path, output_path, reverse=False):
+def build_pdf_fixed_front(front_path, backs_path, output_path, reverse=False):
+    """Mode 1: Fixed front (page 1) repeated for each back."""
     front_reader = PdfReader(front_path)
     backs_reader = PdfReader(backs_path)
     writer = PdfWriter()
@@ -107,6 +108,34 @@ def build_pdf(front_path, backs_path, output_path, reverse=False):
         writer.write(f)
 
     return back_count
+
+
+def build_pdf_paired(front_path, backs_path, output_path, reverse=False):
+    """Mode 2: Paired - Front[i] with Back[i]."""
+    front_reader = PdfReader(front_path)
+    backs_reader = PdfReader(backs_path)
+    writer = PdfWriter()
+
+    front_count = len(front_reader.pages)
+    back_count = len(backs_reader.pages)
+
+    if front_count != back_count:
+        raise ValueError(
+            f"Page count mismatch!\n"
+            f"Front PDF: {front_count} pages\n"
+            f"Backs PDF: {back_count} pages\n\n"
+            f"In Paired mode, both PDFs must have the same number of pages."
+        )
+
+    for i in range(front_count):
+        index = (front_count - 1 - i) if reverse else i
+        writer.add_page(front_reader.pages[index])
+        writer.add_page(backs_reader.pages[index])
+
+    with open(output_path, "wb") as f:
+        writer.write(f)
+
+    return front_count
 
 
 def create_report_pdf(report_path, project_info):
@@ -131,6 +160,7 @@ def create_report_pdf(report_path, project_info):
         f"Output PDF: {project_info['output']}",
         "",
         "--- Statistics ---",
+        f"Mode: {project_info['mode']}",
         f"Number of cards: {project_info['card_count']}",
         f"Total pages: {project_info['total_pages']}",
         f"Back order: {project_info['order']}",
@@ -173,8 +203,8 @@ class FBBuilderApp(ctk.CTk):
         super().__init__()
 
         self.title(f"{APP_NAME} v{APP_VERSION}")
-        self.geometry("1000x720")
-        self.minsize(950, 680)
+        self.geometry("1000x780")
+        self.minsize(950, 740)
 
         self.front_path = None
         self.backs_path = None
@@ -188,7 +218,7 @@ class FBBuilderApp(ctk.CTk):
     def build_ui(self):
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
         # ===== Header =====
         header = ctk.CTkFrame(self, height=70, corner_radius=0, fg_color=("#1f6aa5", "#144870"))
@@ -214,6 +244,36 @@ class FBBuilderApp(ctk.CTk):
         )
         history_btn.pack(side="right", padx=25, pady=15)
 
+        # ===== Mode Selector =====
+        mode_frame = ctk.CTkFrame(self, corner_radius=10, height=90)
+        mode_frame.grid(row=1, column=0, columnspan=2, sticky="ew", padx=15, pady=(15, 5))
+        mode_frame.grid_propagate(False)
+
+        ctk.CTkLabel(
+            mode_frame,
+            text="🎯 Mode:",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(side="left", padx=(20, 10), pady=25)
+
+        self.mode_var = ctk.StringVar(value="Fixed Front")
+        self.mode_menu = ctk.CTkOptionMenu(
+            mode_frame,
+            values=["Fixed Front", "Paired (1-to-1)"],
+            variable=self.mode_var,
+            width=180,
+            height=35,
+            command=self.on_mode_change
+        )
+        self.mode_menu.pack(side="left", pady=25)
+
+        self.mode_desc = ctk.CTkLabel(
+            mode_frame,
+            text="ℹ️ Front page 1 will be used for every back page",
+            font=ctk.CTkFont(size=12),
+            text_color="gray"
+        )
+        self.mode_desc.pack(side="left", padx=20, pady=25)
+
         # ===== File Panels =====
         self.front_frame = self.build_file_panel(
             "Front PDF",
@@ -233,7 +293,7 @@ class FBBuilderApp(ctk.CTk):
 
         # ===== Bottom Panel =====
         bottom = ctk.CTkFrame(self, corner_radius=10, height=80)
-        bottom.grid(row=2, column=0, columnspan=2, sticky="ew", padx=15, pady=(0, 15))
+        bottom.grid(row=3, column=0, columnspan=2, sticky="ew", padx=15, pady=(0, 15))
         bottom.grid_propagate(False)
 
         order_frame = ctk.CTkFrame(bottom, fg_color="transparent")
@@ -241,7 +301,7 @@ class FBBuilderApp(ctk.CTk):
 
         ctk.CTkLabel(
             order_frame,
-            text="Back Order:",
+            text="Order:",
             font=ctk.CTkFont(size=13, weight="bold")
         ).pack(side="left", padx=(0, 10))
 
@@ -277,9 +337,26 @@ class FBBuilderApp(ctk.CTk):
         )
         self.build_btn.pack(side="right", padx=20, pady=15)
 
+    def on_mode_change(self, value):
+        if value == "Fixed Front":
+            self.mode_desc.configure(
+                text="ℹ️ Front page 1 will be used for every back page"
+            )
+            self.front_frame.subtitle_lbl.configure(
+                text="Only page 1 will be used"
+            )
+        else:  # Paired
+            self.mode_desc.configure(
+                text="ℹ️ Each Front page pairs with the same Back page (F1+B1, F2+B2, ...)"
+            )
+            self.front_frame.subtitle_lbl.configure(
+                text="All pages will be used (must match Backs count)"
+            )
+        self.check_ready()
+
     def build_file_panel(self, title, subtitle, col, browse_cmd, tag):
         frame = ctk.CTkFrame(self, corner_radius=10)
-        frame.grid(row=1, column=col, sticky="nsew", padx=15, pady=15)
+        frame.grid(row=2, column=col, sticky="nsew", padx=15, pady=(5, 15))
 
         title_lbl = ctk.CTkLabel(
             frame,
@@ -296,7 +373,6 @@ class FBBuilderApp(ctk.CTk):
         )
         subtitle_lbl.pack(pady=(0, 12))
 
-        # Preview area
         preview_frame = ctk.CTkFrame(
             frame,
             height=260,
@@ -316,7 +392,6 @@ class FBBuilderApp(ctk.CTk):
         )
         preview_lbl.pack(expand=True)
 
-        # Info label (BELOW preview)
         info_lbl = ctk.CTkLabel(
             frame,
             text="ℹ️  No file selected",
@@ -326,7 +401,6 @@ class FBBuilderApp(ctk.CTk):
         )
         info_lbl.pack(pady=(12, 5), padx=15)
 
-        # File name label
         file_lbl = ctk.CTkLabel(
             frame,
             text="",
@@ -335,7 +409,6 @@ class FBBuilderApp(ctk.CTk):
         )
         file_lbl.pack(pady=(0, 8), padx=15)
 
-        # Browse button
         browse_btn = ctk.CTkButton(
             frame,
             text="📁  Browse...",
@@ -350,8 +423,8 @@ class FBBuilderApp(ctk.CTk):
         frame.preview_lbl = preview_lbl
         frame.info_lbl = info_lbl
         frame.file_lbl = file_lbl
+        frame.subtitle_lbl = subtitle_lbl
 
-        # Setup DnD
         if DND_AVAILABLE:
             try:
                 preview_frame.drop_target_register(DND_FILES)
@@ -422,6 +495,7 @@ class FBBuilderApp(ctk.CTk):
 
         self.check_ready()
         self.check_size_match()
+        self.check_paired_match()
 
     def load_backs(self, path):
         info = get_pdf_info(path)
@@ -455,6 +529,7 @@ class FBBuilderApp(ctk.CTk):
 
         self.check_ready()
         self.check_size_match()
+        self.check_paired_match()
 
     def check_ready(self):
         if self.front_path and self.backs_path:
@@ -476,6 +551,20 @@ class FBBuilderApp(ctk.CTk):
                 f"This may cause alignment issues in printing."
             )
 
+    def check_paired_match(self):
+        """Check page count match in Paired mode."""
+        if self.mode_var.get() != "Paired (1-to-1)":
+            return
+        if not (self.front_info and self.backs_info):
+            return
+        if self.front_info['pages'] != self.backs_info['pages']:
+            messagebox.showwarning(
+                "Page Count Mismatch",
+                f"In Paired mode, both PDFs must have equal pages!\n\n"
+                f"Front: {self.front_info['pages']} pages\n"
+                f"Backs: {self.backs_info['pages']} pages"
+            )
+
     def build(self):
         output_path = filedialog.asksaveasfilename(
             title="Save output PDF",
@@ -487,12 +576,22 @@ class FBBuilderApp(ctk.CTk):
 
         try:
             reverse = (self.order_var.get() == "Reverse")
-            count = build_pdf(
-                self.front_path,
-                self.backs_path,
-                output_path,
-                reverse
-            )
+            mode = self.mode_var.get()
+
+            if mode == "Fixed Front":
+                count = build_pdf_fixed_front(
+                    self.front_path,
+                    self.backs_path,
+                    output_path,
+                    reverse
+                )
+            else:  # Paired
+                count = build_pdf_paired(
+                    self.front_path,
+                    self.backs_path,
+                    output_path,
+                    reverse
+                )
 
             project_info = {
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -502,6 +601,7 @@ class FBBuilderApp(ctk.CTk):
                 "card_count": count,
                 "total_pages": count * 2,
                 "order": self.order_var.get(),
+                "mode": mode,
                 "front_size": f"{self.front_info['width_mm']:.1f} × {self.front_info['height_mm']:.1f} mm",
                 "backs_size": f"{self.backs_info['width_mm']:.1f} × {self.backs_info['height_mm']:.1f} mm",
             }
@@ -518,11 +618,14 @@ class FBBuilderApp(ctk.CTk):
             messagebox.showinfo(
                 "Success!",
                 f"✅ PDF Built Successfully!\n\n"
+                f"🎯 Mode: {mode}\n"
                 f"📊 Cards: {count}\n"
                 f"📄 Total pages: {count * 2}\n"
                 f"💾 Saved to:\n{output_path}"
             )
 
+        except ValueError as ve:
+            messagebox.showerror("Validation Error", str(ve))
         except Exception as e:
             messagebox.showerror("Error", f"Failed to build PDF:\n{e}")
 
@@ -556,8 +659,10 @@ class FBBuilderApp(ctk.CTk):
             card = ctk.CTkFrame(scroll, corner_radius=8)
             card.pack(fill="x", pady=5, padx=5)
 
+            mode_str = item.get('mode', 'Fixed Front')
             text = (
                 f"📅  {item['date']}\n"
+                f"🎯  Mode: {mode_str}\n"
                 f"📄  Front: {os.path.basename(item['front'])}\n"
                 f"📄  Backs: {os.path.basename(item['backs'])}\n"
                 f"📊  {item['card_count']} cards  |  {item['order']}"
